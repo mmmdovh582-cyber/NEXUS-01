@@ -1,0 +1,96 @@
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Servo.h>
+#include <SoftwareSerial.h>
+
+// NEXUS-01 Dual OLED Firmware (Sol Ekran = Sol Göz, Sağ Ekran = Sağ Göz)
+// HC-06: RX = Pin 2 (HC-06 TXD), TX = Pin 3 (HC-06 RXD)
+SoftwareSerial btSerial(2, 3);
+
+// 2 Ayrı OLED Ekran Obyekti (128x64)
+Adafruit_SSD1306 leftEyeDisplay(128, 64, &Wire, -1);   // Sol Ekran (Ünvan: 0x3C)
+Adafruit_SSD1306 rightEyeDisplay(128, 64, &Wire, -1);  // Sağ Ekran (Ünvan: 0x3D)
+
+Servo headServo;
+String state = "IDLE";
+int servoPin = 9;
+unsigned long lastBlink = 0;
+
+void setup() {
+  Serial.begin(9600);
+  btSerial.begin(9600);
+  
+  headServo.attach(servoPin);
+  headServo.write(90);
+  
+  // Sol və Sağ OLED ekranları ayrı-ayrılıqda işə salırıq
+  leftEyeDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  rightEyeDisplay.begin(SSD1306_SWITCHCAPVCC, 0x3D);
+  
+  drawBothEyes("IDLE", 90, false);
+}
+
+void loop() {
+  if (btSerial.available()) {
+    String cmd = btSerial.readStringUntil('\n');
+    processCommand(cmd);
+  }
+  if (Serial.available()) {
+    String cmd = Serial.readStringUntil('\n');
+    processCommand(cmd);
+  }
+
+  // Təbii göz qırpma effekti (hər 3.8 saniyədən bir)
+  if (millis() - lastBlink > 3800) {
+    lastBlink = millis();
+    int ang = headServo.read();
+    drawBothEyes(state, ang, true);
+    delay(110);
+    drawBothEyes(state, ang, false);
+  }
+}
+
+void processCommand(String cmd) {
+  cmd.trim();
+  if (cmd.startsWith("S:")) {
+    int angle = cmd.substring(2).toInt();
+    angle = constrain(angle, 15, 165);
+    headServo.write(angle);
+    drawBothEyes(state, angle, false);
+  } else if (cmd.startsWith("E:")) {
+    state = cmd.substring(2);
+    drawBothEyes(state, headServo.read(), false);
+  }
+}
+
+// Hər ekrana öz gözünü çəkən funksiya
+void renderSingleEye(Adafruit_SSD1306 &oled, String st, int angle, bool blink, bool isRightEye) {
+  oled.clearDisplay();
+  
+  // Servo bucağına görə göz bəbəyinin sağa/sola baxması
+  int offsetX = map(angle, 15, 165, 22, -22);
+  int eyeW = 64;
+  int eyeH = blink ? 4 : ((st == "SPEAK") ? 46 : (st == "LISTEN" ? 50 : 40));
+  
+  int x = (128 - eyeW) / 2 + offsetX;
+  int y = (64 - eyeH) / 2;
+
+  oled.fillRoundRect(x, y, eyeW, eyeH, blink ? 2 : 12, SSD1306_WHITE);
+
+  if (!blink) {
+    // Düşünmə (THINK) rejimində göz qapağı effekti
+    if (st == "THINK") {
+      oled.fillRect(x - 2, y - 2, eyeW + 4, 14, SSD1306_BLACK);
+    }
+    // Göz parıltısı (Sol və sağ gözə uyğun simmetrik parlaqlıq)
+    int glintX = isRightEye ? (x + 14) : (x + 16);
+    oled.fillCircle(glintX, y + 12, 4, SSD1306_BLACK);
+  }
+  oled.display();
+}
+
+void drawBothEyes(String st, int angle, bool blink) {
+  renderSingleEye(leftEyeDisplay, st, angle, blink, false);  // Sol ekranda Sol Göz
+  renderSingleEye(rightEyeDisplay, st, angle, blink, true);  // Sağ ekranda Sağ Göz
+}
